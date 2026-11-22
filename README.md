@@ -13,7 +13,19 @@ A small, kid-friendly times table practice game. Plain HTML, CSS and JavaScript 
 - **Rewards:** points with streak and speed bonuses, stars per round, XP ranks (Number Cub up to Legend of Times), badges, confetti and sounds, and a days-in-a-row counter.
 - **Fact Map:** a 12 × 12 grid for grown-ups showing which facts are new, missed, learning or mastered.
 
-Progress is saved in the browser (`localStorage`) on that device.
+- **Progress screen:** rounds per day, accuracy this week, facts that need practice, and recent rounds.
+- **Cloud sync (optional):** link devices with a family code so a parent can see progress from their own phone.
+
+Progress is always saved in the browser (`localStorage`). With cloud sync on, it is also merged into Firebase Firestore so every linked device sees the same progress, and play still works offline.
+
+## Cloud sync setup (one-time)
+
+1. Create a free project at https://console.firebase.google.com.
+2. **Build → Firestore Database → Create database** (production mode).
+3. In the **Rules** tab, paste the contents of [`firestore.rules`](firestore.rules) and publish.
+4. **Project settings → Your apps → Web app**, then copy the `firebaseConfig` object into `js/firebase-config.js`.
+
+Then on the tablet: **Settings → Turn on sync**, and open the link it shows on the other device. Anyone with the family code can read and change that progress, so share it only with family.
 
 ## Run locally
 
@@ -36,5 +48,7 @@ python3 -m http.server 8000
 | `js/questions.js` | Question type builders (add a new type here) |
 | `js/rewards.js` | Points, ranks, badges, day streak |
 | `js/storage.js` | Save/load to `localStorage` |
+| `js/sync.js` | Family codes, merging two saves, Firestore sync |
+| `js/firebase-config.js` | Firebase web config (null = sync off) |
 | `js/fx.js` | Sound effects and confetti |
 | `js/app.js` | Screens and game flow |

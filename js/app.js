@@ -1,10 +1,13 @@
-import { load, save, reset } from './storage.js';
+import { load, save, reset, setOnSave } from './storage.js';
 import {
   LEVELS, factsFor, parseKey, pickFact, record, troubleFacts, stat, tipFor, MASTERED_BOX,
 } from './facts.js';
 import { makeQuestion, answerText, QTYPE_LABELS } from './questions.js';
 import { rankFor, pointsFor, BADGES, checkBadges, touchDay } from './rewards.js';
 import { sfx, setSound, confetti } from './fx.js';
+import {
+  syncConfigured, makeCode, formatCode, cleanCode, connect, disconnect, schedulePush, getStatus, onStatus,
+} from './sync.js';
 
 const app = document.getElementById('app');
 let state = load();
@@ -22,6 +25,47 @@ const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
 
 function persist() {
   save(state);
+}
+
+// ---------- cloud sync ----------
+
+// Which screen to redraw when synced data arrives (null while playing).
+let screen = null;
+
+const STATUS_TEXT = {
+  off: 'Only on this device',
+  connecting: 'Connecting…',
+  saving: 'Saving…',
+  synced: 'Synced ☁️',
+  offline: 'Offline, will sync later',
+};
+
+function startSync() {
+  if (!syncConfigured || !state.familyCode) return;
+  connect(state.familyCode, {
+    getLocal: () => state,
+    applyRemote: (merged) => {
+      state = merged;
+      save(state, false);
+      setSound(state.settings.sound);
+      if (screen && screen !== renderSettings && !document.querySelector('.modal')) screen();
+    },
+  });
+}
+
+setOnSave((s) => schedulePush(s));
+onStatus((st) => {
+  document.querySelectorAll('.syncstatus').forEach((el) => {
+    el.textContent = STATUS_TEXT[st] || st;
+    el.dataset.status = st;
+  });
+});
+
+function linkDevice(code) {
+  state.familyCode = code;
+  state.askedName = true;
+  save(state, false);
+  startSync();
 }
 
 // ---------- level helpers ----------
@@ -51,6 +95,7 @@ function levelPool(level) {
 
 function renderHome() {
   stopTimer();
+  screen = renderHome;
   const rank = rankFor(state.xp);
   const level = currentLevel();
   const pool = levelPool(level);
@@ -115,6 +160,7 @@ function renderHome() {
 
     <nav class="footer">
       <button class="link" data-go="badges">🏅 Badges (${Object.keys(state.badges).length}/${BADGES.length})</button>
+      <button class="link" data-go="progress">📈 Progress</button>
       <button class="link" data-go="map">🗺️ Fact Map</button>
       <button class="link" data-go="settings">⚙️ Settings</button>
     </nav>
@@ -144,6 +190,7 @@ function renderHome() {
   app.querySelectorAll('[data-mode]').forEach((b) => b.addEventListener('click', () => startRound(b.dataset.mode)));
   app.querySelector('[data-go="badges"]').addEventListener('click', renderBadges);
   app.querySelector('[data-go="map"]').addEventListener('click', renderMap);
+  app.querySelector('[data-go="progress"]').addEventListener('click', renderProgress);
   app.querySelector('[data-go="settings"]').addEventListener('click', renderSettings);
 
   if (!state.name && !state.askedName && !document.querySelector('.modal')) askName();
@@ -184,6 +231,7 @@ function stopTimer() {
 }
 
 function startRound(mode) {
+  screen = null;
   const level = currentLevel();
   let pool = levelPool(level);
   let total = ROUND_LENGTH;
@@ -435,6 +483,16 @@ function finishRound() {
   state.xp += r.points + bonus;
   state.rounds++;
   touchDay(state);
+  state.history = [...(state.history || []), {
+    t: Date.now(),
+    mode: r.mode,
+    level: r.level.label,
+    right: r.right,
+    total: r.total,
+    stars,
+    points: r.points + bonus,
+    missed: r.missed,
+  }].slice(-100);
   const after = rankFor(state.xp);
   const newBadges = checkBadges(state, { mode: r.mode, right: r.right, total: r.total });
   persist();
@@ -481,6 +539,7 @@ function finishRound() {
 // ---------- badges ----------
 
 function renderBadges() {
+  screen = renderBadges;
   app.innerHTML = `
     <div class="playbar"><button class="link back">← Back</button><span class="modelabel">🏅 Badges</span><span></span></div>
     <section class="badges">
@@ -502,6 +561,7 @@ function boxClass(s) {
 }
 
 function renderMap() {
+  screen = renderMap;
   let grid = '<div class="cell head">×</div>' + ALL_TABLES.map((n) => `<div class="cell head">${n}</div>`).join('');
   for (const a of ALL_TABLES) {
     grid += `<div class="cell head">${a}</div>`;
@@ -537,13 +597,47 @@ function renderMap() {
 
 // ---------- settings ----------
 
+function shareLink(code) {
+  return `${location.origin}${location.pathname}?family=${formatCode(code)}`;
+}
+
+function syncCardHtml() {
+  if (!syncConfigured) {
+    return `
+      <h2>☁️ Cloud sync</h2>
+      <p class="hint">Cloud sync isn't set up on this site yet, so progress stays in this browser.</p>`;
+  }
+  if (!state.familyCode) {
+    return `
+      <h2>☁️ Cloud sync</h2>
+      <p class="hint">Turn this on to see progress from a parent's phone or another device. You'll get a family code to open on the other device.</p>
+      <button class="btn go" id="syncon">Turn on sync</button>
+      <label class="joinlabel">Already have a family code?
+        <span class="joinrow"><input id="joincode" placeholder="ABCD-EFGH-JKMN" autocapitalize="characters" autocomplete="off"><button class="btn" id="join">Link</button></span>
+      </label>
+      <p class="hint" id="joinerr" hidden>That code doesn't look right. It has 12 letters and numbers.</p>`;
+  }
+  return `
+    <h2>☁️ Cloud sync</h2>
+    <p>Status: <b class="syncstatus" data-status="${getStatus()}">${STATUS_TEXT[getStatus()] || ''}</b></p>
+    <p class="hint">Family code</p>
+    <div class="familycode">${formatCode(state.familyCode)}</div>
+    <p class="hint">Open this link on another device to see the same progress:</p>
+    <div class="joinrow"><input id="sharelink" readonly value="${esc(shareLink(state.familyCode))}"><button class="btn" id="copy">Copy</button></div>
+    <p class="hint">Anyone with the code or link can see and change this progress, so only share it with family.</p>
+    <button class="btn" id="unlink">Unlink this device</button>`;
+}
+
 function renderSettings() {
+  screen = renderSettings;
   app.innerHTML = `
     <div class="playbar"><button class="link back">← Back</button><span class="modelabel">⚙️ Settings</span><span></span></div>
     <section class="card settings">
       <label>Player name <input id="name" maxlength="20" value="${esc(state.name)}"></label>
       <label class="row"><input type="checkbox" id="sound" ${state.settings.sound ? 'checked' : ''}> Sounds</label>
-      <p class="hint">Progress is saved in this browser on this device.</p>
+    </section>
+    <section class="card settings">${syncCardHtml()}</section>
+    <section class="card settings">
       <button class="btn danger" id="reset">Start over (erase progress)</button>
     </section>`;
   app.querySelector('.back').addEventListener('click', renderHome);
@@ -556,8 +650,42 @@ function renderSettings() {
     setSound(e.target.checked);
     persist();
   });
+  document.getElementById('syncon')?.addEventListener('click', () => {
+    linkDevice(makeCode());
+    renderSettings();
+  });
+  document.getElementById('join')?.addEventListener('click', () => {
+    const code = cleanCode(document.getElementById('joincode').value);
+    if (!code) {
+      document.getElementById('joinerr').hidden = false;
+      return;
+    }
+    linkDevice(code);
+    renderSettings();
+  });
+  document.getElementById('copy')?.addEventListener('click', async (e) => {
+    const input = document.getElementById('sharelink');
+    try {
+      await navigator.clipboard.writeText(input.value);
+    } catch {
+      input.select();
+      document.execCommand('copy');
+    }
+    e.target.textContent = 'Copied!';
+  });
+  document.getElementById('unlink')?.addEventListener('click', () => {
+    if (!confirm('Stop syncing this device? Progress stays saved here and in the cloud.')) return;
+    disconnect();
+    state.familyCode = '';
+    save(state, false);
+    renderSettings();
+  });
   document.getElementById('reset').addEventListener('click', () => {
-    if (confirm('Erase all progress, XP and badges? This cannot be undone.')) {
+    const msg = state.familyCode
+      ? 'Erase all progress on this device? This device will also be unlinked from cloud sync (the cloud copy is kept).'
+      : 'Erase all progress, XP and badges? This cannot be undone.';
+    if (confirm(msg)) {
+      disconnect();
       state = reset();
       persist();
       renderHome();
@@ -565,4 +693,105 @@ function renderSettings() {
   });
 }
 
+// ---------- progress (for grown-ups) ----------
+
+const MODE_ICON = { practice: '⭐', blitz: '⏱️', fix: '🔧' };
+
+function renderProgress() {
+  screen = renderProgress;
+  const history = state.history || [];
+  const weekAgo = Date.now() - 7 * 864e5;
+  const week = history.filter((h) => h.t >= weekAgo);
+  const wRight = week.reduce((n, h) => n + h.right, 0);
+  const wTotal = week.reduce((n, h) => n + h.total, 0);
+  const all = factsFor(ALL_TABLES, 12);
+  const mastered = all.filter((k) => stat(state, k).box >= MASTERED_BOX).length;
+  const trouble = troubleFacts(state).slice(0, 12);
+  const rank = rankFor(state.xp);
+
+  // Rounds per day, last 7 days
+  const days = Array.from({ length: 7 }, (_, i) => {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    d.setDate(d.getDate() - (6 - i));
+    const start = d.getTime();
+    const n = history.filter((h) => h.t >= start && h.t < start + 864e5).length;
+    return { label: d.toLocaleDateString(undefined, { weekday: 'short' }), n };
+  });
+  const most = Math.max(1, ...days.map((d) => d.n));
+
+  const when = (t) => new Date(t).toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+
+  app.innerHTML = `
+    <div class="playbar"><button class="link back">← Back</button><span class="modelabel">📈 Progress</span><span></span></div>
+    <section class="card">
+      <h2>${esc(state.name || 'Player')} · ${rank.emoji} ${rank.title}</h2>
+      <p class="hint">${syncConfigured && state.familyCode ? `Cloud sync: <span class="syncstatus">${STATUS_TEXT[getStatus()] || ''}</span>` : 'Progress saved on this device only. Turn on cloud sync in Settings to see it elsewhere.'}</p>
+      <div class="stats four">
+        <div><b>${state.rounds}</b><small>rounds played</small></div>
+        <div><b>${wTotal ? Math.round((wRight / wTotal) * 100) + '%' : '–'}</b><small>right this week</small></div>
+        <div><b>${mastered}/${all.length}</b><small>facts mastered</small></div>
+        <div><b>${state.days.streak || 0}</b><small>days in a row</small></div>
+      </div>
+    </section>
+    <section class="card">
+      <h2>Rounds this week</h2>
+      <div class="bars">
+        ${days.map((d) => `<div class="bar"><span style="height:${(d.n / most) * 100}%"></span><b>${d.n || ''}</b><small>${d.label}</small></div>`).join('')}
+      </div>
+    </section>
+    <section class="card">
+      <h2>Needs practice</h2>
+      ${trouble.length ? `<div class="chips">${trouble.map((k) => {
+        const [a, b] = parseKey(k);
+        const s = stat(state, k);
+        return `<span class="chip trouble">${a} × ${b} = ${a * b} <small>missed ${s.wrong}×</small></span>`;
+      }).join('')}</div>` : '<p class="hint">Nothing right now. 🎉</p>'}
+      <button class="link" id="tomap">See the full Fact Map →</button>
+    </section>
+    <section class="card">
+      <h2>Recent rounds</h2>
+      ${history.length ? `<ul class="rounds">${history.slice(-20).reverse().map((h) => `
+        <li>
+          <span class="ricon">${MODE_ICON[h.mode] || '⭐'}</span>
+          <span class="rmain"><b>${h.right}${h.mode === 'blitz' ? ' right' : ` / ${h.total}`}</b> · ${esc(h.level)}<small>${when(h.t)}</small></span>
+          <span class="rstars">${'★'.repeat(h.stars)}${'☆'.repeat(3 - h.stars)}</span>
+        </li>`).join('')}</ul>` : '<p class="hint">No rounds yet.</p>'}
+    </section>`;
+  app.querySelector('.back').addEventListener('click', renderHome);
+  document.getElementById('tomap').addEventListener('click', renderMap);
+}
+
+// ---------- start up ----------
+
+function joinFromLink() {
+  const params = new URLSearchParams(location.search);
+  const code = cleanCode(params.get('family'));
+  if (!params.has('family')) return;
+  history.replaceState(null, '', location.pathname);
+  if (!code || !syncConfigured || code === state.familyCode) return;
+  const dlg = document.createElement('div');
+  dlg.className = 'modal';
+  dlg.innerHTML = `
+    <div class="modal-box">
+      <div class="big">☁️</div>
+      <h2>Link this device?</h2>
+      <p>This device will share progress with family code <b>${formatCode(code)}</b>.</p>
+      <button class="btn go" id="dolink">Link it</button>
+      <button class="btn" id="nolink">Not now</button>
+    </div>`;
+  document.body.appendChild(dlg);
+  dlg.querySelector('#dolink').addEventListener('click', () => {
+    dlg.remove();
+    linkDevice(code);
+    renderHome();
+  });
+  dlg.querySelector('#nolink').addEventListener('click', () => {
+    dlg.remove();
+    renderHome();
+  });
+}
+
+joinFromLink();
+startSync();
 renderHome();
