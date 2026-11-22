@@ -6,7 +6,7 @@ import { makeQuestion, answerText, QTYPE_LABELS } from './questions.js';
 import { rankFor, pointsFor, BADGES, checkBadges, touchDay } from './rewards.js';
 import { sfx, setSound, confetti } from './fx.js';
 import {
-  syncConfigured, makeCode, formatCode, cleanCode, connect, disconnect, schedulePush, getStatus, onStatus,
+  syncConfigured, makeCode, formatCode, cleanCode, connect, disconnect, schedulePush, getStatus, getLastError, onStatus,
 } from './sync.js';
 
 const app = document.getElementById('app');
@@ -54,10 +54,26 @@ function startSync() {
 }
 
 setOnSave((s) => schedulePush(s));
+const ERROR_HELP = {
+  'permission-denied': 'The cloud database refused access. Check that the Firestore rules from firestore.rules are published.',
+  'not-found': 'The cloud database was not found. Check that a Firestore database named (default) exists.',
+  'failed-precondition': 'The cloud database is not set up yet. Create the Firestore database in the Firebase console.',
+  unavailable: 'Can\'t reach the internet right now. It will sync when the connection is back.',
+};
+
+function errorText() {
+  const code = getLastError();
+  if (!code) return '';
+  return `${ERROR_HELP[code] || 'Something went wrong talking to the cloud.'} (${code})`;
+}
+
 onStatus((st) => {
   document.querySelectorAll('.syncstatus').forEach((el) => {
     el.textContent = STATUS_TEXT[st] || st;
     el.dataset.status = st;
+  });
+  document.querySelectorAll('.syncerror').forEach((el) => {
+    el.textContent = st === 'offline' ? errorText() : '';
   });
 });
 
@@ -620,6 +636,7 @@ function syncCardHtml() {
   return `
     <h2>☁️ Cloud sync</h2>
     <p>Status: <b class="syncstatus" data-status="${getStatus()}">${STATUS_TEXT[getStatus()] || ''}</b></p>
+    <p class="hint syncerror">${getStatus() === 'offline' ? esc(errorText()) : ''}</p>
     <p class="hint">Family code</p>
     <div class="familycode">${formatCode(state.familyCode)}</div>
     <p class="hint">Open this link on another device to see the same progress:</p>

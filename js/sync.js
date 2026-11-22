@@ -91,6 +91,7 @@ let ref = null;
 let unsubscribe = null;
 let pushTimer = null;
 let status = 'off';
+let lastError = '';
 let statusListener = () => {};
 
 function setStatus(s) {
@@ -100,6 +101,17 @@ function setStatus(s) {
 
 export function getStatus() {
   return status;
+}
+
+/** Firebase error code from the last failure, e.g. "permission-denied". */
+export function getLastError() {
+  return lastError;
+}
+
+function fail(err) {
+  lastError = (err && (err.code || err.message)) || 'unknown';
+  console.warn('Cloud sync failed:', err);
+  setStatus('offline');
 }
 
 export function onStatus(fn) {
@@ -123,8 +135,8 @@ export async function connect(code, { getLocal, applyRemote }) {
   setStatus('connecting');
   try {
     await ensureDb();
-  } catch {
-    setStatus('offline');
+  } catch (err) {
+    fail(err);
     return;
   }
   ref = fs.doc(db, 'families', code);
@@ -146,9 +158,12 @@ export async function connect(code, { getLocal, applyRemote }) {
       merged.familyCode = code;
       if (!sameProgress(merged, local)) applyRemote(merged);
       if (!sameProgress(merged, remote)) schedulePush(merged);
-      else if (!snap.metadata.hasPendingWrites) setStatus('synced');
+      else if (!snap.metadata.hasPendingWrites) {
+        lastError = '';
+        setStatus('synced');
+      }
     },
-    () => setStatus('offline'),
+    fail,
   );
 }
 
@@ -169,9 +184,10 @@ async function pushNow(state) {
       name: state.name || '',
       updated: state.updated || Date.now(),
     });
+    lastError = '';
     setStatus('synced');
-  } catch {
-    setStatus('offline');
+  } catch (err) {
+    fail(err);
   }
 }
 
