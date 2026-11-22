@@ -1,0 +1,11 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{db}/documents {
+    // One document per family, named by its 12-character family code.
+    // Knowing the code is what grants access, so codes are long and random.
+    match /families/{code} {
+      allow read, write: if code.size() == 12
+        && (request.resource == null || request.resource.data.data.size() < 500000);
+    }
+  }
+}
