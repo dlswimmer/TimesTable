@@ -8,7 +8,9 @@ import { rankFor, pointsFor, BADGES, checkBadges, touchDay } from './rewards.js'
 import { sfx, setSound, confetti } from './fx.js';
 import {
   syncConfigured, makeCode, formatCode, cleanCode, connect, disconnect, schedulePush, getStatus, getLastError, onStatus,
+  pushReport, deleteReport, REPORT_CODE_LENGTH,
 } from './sync.js';
+import { buildSnapshot, summaryText } from './report-data.js';
 import {
   today, dateStreak, gems, addGems, DAILY_LENGTH, dailyDoneToday, dailyPool, openChest, markDailyDone,
   roundsToday, checkGoal, AVATARS, THEMES, owns, buy, avatarEmoji, applyTheme,
@@ -61,7 +63,10 @@ function startSync() {
   });
 }
 
-setOnSave((s) => schedulePush(s));
+setOnSave((s) => {
+  schedulePush(s);
+  if (s.reportCode) pushReport(s.reportCode, buildSnapshot(s));
+});
 const ERROR_HELP = {
   'permission-denied': 'The cloud database refused access. Check that the Firestore rules from firestore.rules are published.',
   'not-found': 'The cloud database was not found. Check that a Firestore database named (default) exists.',
@@ -1054,6 +1059,34 @@ function weeklyHtml() {
     ${w.stuck.length ? `<div class="chips">${factChips(w.stuck, 'trouble')}</div>` : ''}`;
 }
 
+async function copyText(text, button) {
+  try {
+    await navigator.clipboard.writeText(text);
+    if (button) button.textContent = '✅ Copied!';
+  } catch {
+    prompt('Copy this:', text);
+  }
+}
+
+function teacherLink(code) {
+  return new URL(`report.html?r=${code}`, location.href).href;
+}
+
+function teacherCardHtml() {
+  if (!syncConfigured) return '';
+  if (!state.reportCode) {
+    return `
+      <p><b>Share with a teacher</b></p>
+      <p class="hint">Makes a read-only link to the report. It shows only ${esc((state.name || 'his').split(' ')[0])}'s first name and math progress, stays up to date, and can't change anything in the game. You can turn it off anytime.</p>
+      <button class="btn" id="teacheron">🍎 Create teacher link</button>`;
+  }
+  return `
+    <p><b>🍎 Teacher link is on</b></p>
+    <div class="joinrow"><input id="teacherlink" readonly value="${esc(teacherLink(state.reportCode))}"><button class="btn" id="copyteacher">Copy</button></div>
+    <p class="hint">Read-only and updates as he plays. Turning it off makes the link stop working.</p>
+    <button class="btn" id="teacheroff">Turn off teacher link</button>`;
+}
+
 function renderProgress() {
   screen = renderProgress;
   const history = state.history || [];
@@ -1118,6 +1151,14 @@ function renderProgress() {
       }).join('')}</div>` : '<p class="hint">Nothing right now. 🎉</p>'}
       <button class="link" id="tomap">See the full Fact Map →</button>
     </section>
+    <section class="card grownups">
+      <h2>👪 Share progress</h2>
+      <div class="actions left">
+        <a class="btn go" href="report.html">📄 Full report (print or PDF)</a>
+        <button class="btn" id="copysum">📋 Copy summary</button>
+      </div>
+      ${teacherCardHtml()}
+    </section>
     <section class="card">
       <h2>Recent rounds</h2>
       ${history.length ? `<ul class="rounds">${history.slice(-20).reverse().map((h) => `
@@ -1129,6 +1170,20 @@ function renderProgress() {
     </section>`;
   app.querySelector('.back').addEventListener('click', renderHome);
   document.getElementById('tomap').addEventListener('click', renderMap);
+  document.getElementById('copysum').addEventListener('click', (e) => copyText(summaryText(buildSnapshot(state)), e.target));
+  document.getElementById('teacheron')?.addEventListener('click', () => {
+    state.reportCode = makeCode(REPORT_CODE_LENGTH);
+    persist(); // also uploads the first snapshot
+    renderProgress();
+  });
+  document.getElementById('copyteacher')?.addEventListener('click', (e) => copyText(document.getElementById('teacherlink').value, e.target));
+  document.getElementById('teacheroff')?.addEventListener('click', () => {
+    if (!confirm('Turn off the teacher link? Anyone who has it will no longer see the report.')) return;
+    deleteReport(state.reportCode);
+    state.reportCode = '';
+    persist();
+    renderProgress();
+  });
 }
 
 // ---------- start up ----------
