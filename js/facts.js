@@ -161,3 +161,33 @@ export function tipFor(a, b) {
   if (a === b) tips.push(`${a} × ${a} is a square number. Picture a ${a} by ${a} grid!`);
   return tips[0] || '';
 }
+
+// ---------- division unlock ----------
+// Division is multiplication backwards, so it waits until the facts are solid.
+// settings.division: 'auto' (unlock after 3 tables are mastered up to ×10),
+// 'on' (unlocked now, any fact), or 'off'.
+
+export const DIVISION_TABLES_NEEDED = 3;
+
+export function masteredTableCount(state) {
+  let n = 0;
+  for (let t = 1; t <= 12; t++) if (isTableMastered(state, t, 10)) n++;
+  return n;
+}
+
+export function divisionMode(state) {
+  return state.settings.division || 'auto';
+}
+
+export function divisionUnlocked(state) {
+  const mode = divisionMode(state);
+  if (mode === 'on') return true;
+  if (mode === 'off') return false;
+  return masteredTableCount(state) >= DIVISION_TABLES_NEEDED;
+}
+
+/** May this fact be asked as a division question? (auto mode: only once it's mastered) */
+export function canDivide(state, key) {
+  if (!divisionUnlocked(state)) return false;
+  return divisionMode(state) === 'on' || stat(state, key).box >= MASTERED_BOX;
+}

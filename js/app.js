@@ -1,6 +1,7 @@
 import { load, save, reset, setOnSave } from './storage.js';
 import {
   LEVELS, factsFor, parseKey, pickFact, record, troubleFacts, stat, tipFor, MASTERED_BOX,
+  divisionUnlocked, divisionMode, canDivide, masteredTableCount, DIVISION_TABLES_NEEDED,
 } from './facts.js';
 import { makeQuestion, answerText, spokenText, QTYPE_LABELS } from './questions.js';
 import { rankFor, pointsFor, BADGES, checkBadges, touchDay } from './rewards.js';
@@ -114,6 +115,12 @@ function levelPool(level) {
   return factsFor(level.tables, level.maxFactor);
 }
 
+/** The chosen question style, falling back to the mix if division is locked. */
+function currentQtype() {
+  const q = state.settings.qtype;
+  return q === 'divide' && !divisionUnlocked(state) ? 'mixed' : q;
+}
+
 // ---------- home ----------
 
 function renderHome() {
@@ -188,9 +195,13 @@ function renderHome() {
     <section class="card">
       <h2>2. Pick a question style</h2>
       <div class="chips">
-        ${Object.entries(QTYPE_LABELS).map(([id, q]) => `
-          <button class="chip ${state.settings.qtype === id ? 'on' : ''}" data-qtype="${id}">${q.emoji} ${q.label}</button>`).join('')}
+        ${Object.entries(QTYPE_LABELS).filter(([id]) => id !== 'divide' || divisionMode(state) !== 'off').map(([id, q]) => {
+          const locked = id === 'divide' && !divisionUnlocked(state);
+          return `<button class="chip ${currentQtype() === id ? 'on' : ''} ${locked ? 'locked' : ''}" data-qtype="${id}">${locked ? '🔒' : q.emoji} ${q.label}</button>`;
+        }).join('')}
       </div>
+      ${divisionMode(state) === 'auto' && !divisionUnlocked(state) ? `
+        <p class="hint lockhint" id="lockhint">🔒 Division unlocks when you master ${DIVISION_TABLES_NEEDED} tables (${masteredTableCount(state)} of ${DIVISION_TABLES_NEEDED} so far).</p>` : ''}
     </section>
 
     <section class="card">
@@ -231,6 +242,13 @@ function renderHome() {
     renderHome();
   }));
   app.querySelectorAll('[data-qtype]').forEach((b) => b.addEventListener('click', () => {
+    if (b.classList.contains('locked')) {
+      const hint = document.getElementById('lockhint');
+      hint?.classList.remove('shake');
+      void hint?.offsetWidth;
+      hint?.classList.add('shake');
+      return;
+    }
     state.settings.qtype = b.dataset.qtype;
     persist();
     renderHome();
@@ -287,7 +305,7 @@ function startRound(mode, opts = {}) {
   let level = currentLevel();
   let pool = levelPool(level);
   let total = ROUND_LENGTH;
-  let qtype = state.settings.qtype;
+  let qtype = currentQtype();
   if (mode === 'fix') {
     pool = troubleFacts(state);
     if (!pool.length) return renderHome();
@@ -306,6 +324,13 @@ function startRound(mode, opts = {}) {
     total = Infinity;
     qtype = 'mixed';
     level = { ...level, label: `Boss ×${opts.table}`, qtypes: BOSS_QTYPES, points: 20 };
+  }
+  if (qtype === 'divide' && mode !== 'boss') {
+    // Only divide facts he has mastered; if this level has none yet, use any mastered fact.
+    const ok = pool.filter((k) => canDivide(state, k));
+    const any = Object.keys(state.facts).filter((k) => canDivide(state, k));
+    pool = ok.length ? ok : any.length ? any : pool;
+    if (!ok.length && !any.length) qtype = 'mixed';
   }
   round = {
     mode, level, pool, total, qtype,
@@ -343,7 +368,9 @@ function nextQuestion() {
   round.recent = keep ? [...round.recent, key].slice(-keep) : [];
   const [x, y] = parseKey(key);
   round.key = key;
-  round.q = makeQuestion(x, y, round.qtype, round.level.qtypes);
+  const weights = canDivide(state, key) ? round.level.qtypes : { ...round.level.qtypes, divide: 0 };
+  const qtype = round.qtype === 'divide' && !canDivide(state, key) ? 'type' : round.qtype;
+  round.q = makeQuestion(x, y, qtype, weights);
   round.entry = '';
   round.answered = false;
   round.shownAt = Date.now();
@@ -613,12 +640,14 @@ function finishRound() {
   addGems(state, gemsWon);
   const goalGems = checkGoal(state);
   const after = rankFor(state.xp);
+  const divisionJustUnlocked = divisionMode(state) === 'auto' && divisionUnlocked(state) && !state.divisionUnlocked;
+  if (divisionJustUnlocked) state.divisionUnlocked = new Date().toISOString();
   const newBadges = checkBadges(state, { mode: r.mode, right: r.right, total: r.total });
   persist();
   round = null;
 
   const rankUp = after.index > before.index;
-  if (stars >= 2 || rankUp || newBadges.length) {
+  if (stars >= 2 || rankUp || newBadges.length || divisionJustUnlocked) {
     sfx.fanfare();
     confetti(stars === 3 || rankUp ? 200 : 100);
   }
@@ -640,6 +669,7 @@ function finishRound() {
         <div class="chestprize" id="chestprize" hidden><span class="big">💎</span><b>+${chest.gemsWon} gems and +${chest.xpWon} XP!</b>${chest.streak > 1 ? `<small>🔥 ${chest.streak}-day challenge streak</small>` : ''}</div>` : ''}
       ${goalGems ? `<div class="goalmet">🎯 Today's goal reached! 💎 +${goalGems} gems</div>` : ''}
       ${r.mode === 'blitz' && r.right >= state.best.blitz && r.right > 0 ? '<p class="newbest">🏁 New personal best!</p>' : ''}
+      ${divisionJustUnlocked ? `<div class="rankup unlock"><span class="big">➗</span><b>Division unlocked!</b> You mastered ${DIVISION_TABLES_NEEDED} tables, so now you can try division. Pick ➗ Division on the home screen.</div>` : ''}
       ${rankUp ? `<div class="rankup"><span class="big">${after.emoji}</span><b>Rank up!</b> You're now a <b>${after.title}</b>!</div>` : ''}
       ${newBadges.length ? `
         <div class="newbadges"><h2>New badge${newBadges.length > 1 ? 's' : ''}!</h2>
@@ -877,6 +907,13 @@ function renderSettings() {
         ${ALL_TABLES.map((t) => `<button class="chip ${(state.settings.goal?.tables || []).includes(t) ? 'on' : ''}" data-focus="${t}">×${t}</button>`).join('')}
       </div>
       <p class="hint">Focus tables get their own practice button, and the daily challenge uses them.</p>
+      <label>Division
+        <select id="division">
+          ${[['auto', `Unlock after mastering ${DIVISION_TABLES_NEEDED} tables (default)`], ['on', 'Unlocked now'], ['off', 'Off']]
+            .map(([v, l]) => `<option value="${v}" ${divisionMode(state) === v ? 'selected' : ''}>${l}</option>`).join('')}
+        </select>
+      </label>
+      <p class="hint">With the default, a division question only uses facts he has already mastered (42 ÷ 6 appears once 6 × 7 is mastered).</p>
       <label>Speed needed to master a fact
         <select id="speed">
           ${[[0, 'No time limit'], [10, '10 seconds (relaxed)'], [6, '6 seconds (default)'], [4, '4 seconds (quick)'], [3, '3 seconds (lightning)']]
@@ -917,6 +954,10 @@ function renderSettings() {
     b.classList.toggle('on', set.has(t));
     persist();
   }));
+  document.getElementById('division').addEventListener('change', (e) => {
+    state.settings.division = e.target.value;
+    persist();
+  });
   document.getElementById('speed').addEventListener('change', (e) => {
     state.settings.speed = Number(e.target.value);
     persist();
