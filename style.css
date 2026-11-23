@@ -545,3 +545,9 @@ select {
 @media (max-width: 520px) {
   .modes { grid-template-columns: 1fr; }
 }
+
+.chip.locked { opacity: 0.6; border-style: dashed; }
+.lockhint { margin: 10px 0 0; }
+.lockhint.shake { animation: shake 0.35s; color: var(--brand); font-weight: 700; }
+.rankup.unlock { background: #ede9fe; }
+:root[data-theme="space"] .rankup.unlock { background: #2e1065; }

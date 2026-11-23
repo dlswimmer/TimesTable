@@ -16,7 +16,7 @@ A small, kid-friendly times table practice game. Plain HTML, CSS and JavaScript 
 - **Daily challenge:** 10 questions a day (from the parent's focus tables or weak spots) that opens a treasure chest of gems and XP.
 - **Boss battles:** a boss for each table with a health bar. Right answers hit (fast ones hit twice) and misses cost hearts.
 - **Shop:** gems from rounds, chests, bosses and goals buy avatars and themes (Ocean, Jungle, Candy, Space).
-- **Division mode**, **read-aloud questions** (browser speech), and a **dot-grid picture** after each miss.
+- **Division** unlocks once 3 tables are mastered up to ×10, and only asks about facts already mastered (parents can unlock it early or turn it off). Also **read-aloud questions** (browser speech), and a **dot-grid picture** after each miss.
 - **Speed goal:** a fact is only "mastered" once it's answered within the speed limit (default 6 seconds, set in Settings).
 - **For grown-ups (Settings):** a daily rounds goal with a gem bonus, focus tables, and the speed limit.
 - **Answer times:** each fact keeps a running average answer time and each round logs seconds per answer.

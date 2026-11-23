@@ -1,6 +1,6 @@
 // Points, ranks and badges.
 
-import { isTableMastered, factsFor, stat, MASTERED_BOX } from './facts.js';
+import { isTableMastered, factsFor, stat, MASTERED_BOX, masteredTableCount, DIVISION_TABLES_NEEDED } from './facts.js';
 
 export const RANKS = [
   { xp: 0, title: 'Number Cub', emoji: '🐻' },
@@ -48,6 +48,7 @@ export const BADGES = [
   { id: 'daily7', emoji: '🗝️', name: 'Treasure Hunter', desc: 'Finish 7 daily challenges', test: (s) => (s.dailyDone || []).length >= 7 },
   { id: 'boss1', emoji: '⚔️', name: 'Boss Slayer', desc: 'Beat your first boss', test: (s) => (s.bosses || []).length >= 1 },
   { id: 'boss12', emoji: '🛡️', name: 'Hero of the Realm', desc: 'Beat all 12 bosses', test: (s) => (s.bosses || []).length >= 12 },
+  { id: 'division', emoji: '➗', name: 'Division Unlocked', desc: `Master ${DIVISION_TABLES_NEEDED} tables up to ×10`, test: (s) => masteredTableCount(s) >= DIVISION_TABLES_NEEDED },
   { id: 'shopper', emoji: '🛍️', name: 'Shopper', desc: 'Buy something in the shop', test: (s) => (s.owned || []).length >= 1 },
   { id: 'rounds25', emoji: '🎮', name: 'Gamer', desc: 'Finish 25 rounds', test: (s) => s.rounds >= 25 },
   ...Array.from({ length: 12 }, (_, i) => {
