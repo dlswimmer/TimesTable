@@ -10,14 +10,15 @@ import { FIREBASE_CONFIG } from './firebase-config.js';
 const SDK = 'https://www.gstatic.com/firebasejs/10.14.1';
 const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'; // no 0/O, 1/I/L
 const CODE_LENGTH = 12;
+export const REPORT_CODE_LENGTH = 16;
 const HISTORY_CAP = 100;
 
 export const syncConfigured = Boolean(FIREBASE_CONFIG && FIREBASE_CONFIG.projectId);
 
 // ---------- family codes ----------
 
-export function makeCode() {
-  const bytes = new Uint8Array(CODE_LENGTH);
+export function makeCode(length = CODE_LENGTH) {
+  const bytes = new Uint8Array(length);
   crypto.getRandomValues(bytes);
   return Array.from(bytes, (b) => CODE_ALPHABET[b % CODE_ALPHABET.length]).join('');
 }
@@ -27,9 +28,9 @@ export function formatCode(code) {
   return code.replace(/(.{4})(?=.)/g, '$1-');
 }
 
-export function cleanCode(text) {
+export function cleanCode(text, length = CODE_LENGTH) {
   const c = String(text || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
-  return c.length === CODE_LENGTH && [...c].every((ch) => CODE_ALPHABET.includes(ch)) ? c : '';
+  return c.length === length && [...c].every((ch) => CODE_ALPHABET.includes(ch)) ? c : '';
 }
 
 // ---------- merging two copies of the save ----------
@@ -204,4 +205,42 @@ export function schedulePush(state) {
   clearTimeout(pushTimer);
   setStatus('saving');
   pushTimer = setTimeout(() => pushNow(state), 1500);
+}
+
+// ---------- read-only teacher reports ----------
+// A separate document, reports/{16-char code}, holds only a report snapshot
+// (first name and math stats). The game never reads it, so someone with the
+// report link can't affect play.
+
+let reportTimer = null;
+
+export function pushReport(code, snapshot) {
+  if (!syncConfigured || !code) return;
+  clearTimeout(reportTimer);
+  reportTimer = setTimeout(async () => {
+    try {
+      await ensureDb();
+      await fs.setDoc(fs.doc(db, 'reports', code), { data: JSON.stringify(snapshot), updated: Date.now() });
+    } catch (err) {
+      console.warn('Report update failed:', err);
+    }
+  }, 2000);
+}
+
+export async function deleteReport(code) {
+  clearTimeout(reportTimer);
+  if (!syncConfigured || !code) return;
+  try {
+    await ensureDb();
+    await fs.deleteDoc(fs.doc(db, 'reports', code));
+  } catch (err) {
+    console.warn('Report delete failed:', err);
+  }
+}
+
+/** For the report page: the shared snapshot, or null if it's gone. */
+export async function fetchReport(code) {
+  await ensureDb();
+  const snap = await fs.getDoc(fs.doc(db, 'reports', code));
+  return snap.exists() ? JSON.parse(snap.data().data) : null;
 }

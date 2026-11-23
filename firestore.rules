@@ -8,5 +8,12 @@ service cloud.firestore {
       allow create, update: if code.size() == 12
         && request.resource.data.data.size() < 500000;
     }
+    // Read-only teacher reports: a snapshot of math progress, named by a
+    // separate 16-character code. Deleting it turns the teacher link off.
+    match /reports/{code} {
+      allow read, delete: if code.size() == 16;
+      allow create, update: if code.size() == 16
+        && request.resource.data.data.size() < 300000;
+    }
   }
 }

@@ -551,3 +551,7 @@ select {
 .lockhint.shake { animation: shake 0.35s; color: var(--brand); font-weight: 700; }
 .rankup.unlock { background: #ede9fe; }
 :root[data-theme="space"] .rankup.unlock { background: #2e1065; }
+
+.actions.left { justify-content: flex-start; margin: 0 0 12px; }
+a.btn { text-decoration: none; display: inline-block; }
+.grownups p { margin: 0 0 8px; }

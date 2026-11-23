@@ -21,6 +21,8 @@ A small, kid-friendly times table practice game. Plain HTML, CSS and JavaScript 
 - **For grown-ups (Settings):** a daily rounds goal with a gem bonus, focus tables, and the speed limit.
 - **Answer times:** each fact keeps a running average answer time and each round logs seconds per answer.
 - **Progress screen:** weekly summary (newly mastered, still stuck), speed trend and slowest facts, rounds per day, accuracy this week, facts that need practice, and recent rounds.
+- **Parent report (`report.html`):** a printable dashboard with mastery by table, week-by-week accuracy and speed, a practice calendar, stuck and slowest facts, and the full fact grid. Open it from Progress → Share progress, which also has a **Copy summary** button for email.
+- **Teacher link (optional, needs cloud sync set up):** a read-only link (`report.html?r=CODE`) to a snapshot holding only the first name and math progress. It updates as he plays, can't change the game, and can be turned off.
 - **Cloud sync (optional):** link devices with a family code so a parent can see progress from their own phone.
 
 Progress is always saved in the browser (`localStorage`). With cloud sync on, it is also merged into Firebase Firestore so every linked device sees the same progress, and play still works offline.
@@ -55,6 +57,7 @@ python3 -m http.server 8000
 | `js/questions.js` | Question type builders (add a new type here) |
 | `js/rewards.js` | Points, ranks, badges, day streak |
 | `js/storage.js` | Save/load to `localStorage` |
+| `js/report-data.js`, `js/report.js` | Report numbers, summary text, and the report page |
 | `js/sync.js` | Family codes, merging two saves, Firestore sync |
 | `js/firebase-config.js` | Firebase web config (null = sync off) |
 | `js/fx.js` | Sound effects and confetti |
