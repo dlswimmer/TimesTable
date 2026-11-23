@@ -2,16 +2,22 @@ import { load, save, reset, setOnSave } from './storage.js';
 import {
   LEVELS, factsFor, parseKey, pickFact, record, troubleFacts, stat, tipFor, MASTERED_BOX,
 } from './facts.js';
-import { makeQuestion, answerText, QTYPE_LABELS } from './questions.js';
+import { makeQuestion, answerText, spokenText, QTYPE_LABELS } from './questions.js';
 import { rankFor, pointsFor, BADGES, checkBadges, touchDay } from './rewards.js';
 import { sfx, setSound, confetti } from './fx.js';
 import {
   syncConfigured, makeCode, formatCode, cleanCode, connect, disconnect, schedulePush, getStatus, getLastError, onStatus,
 } from './sync.js';
+import {
+  today, dateStreak, gems, addGems, DAILY_LENGTH, dailyDoneToday, dailyPool, openChest, markDailyDone,
+  roundsToday, checkGoal, AVATARS, THEMES, owns, buy, avatarEmoji, applyTheme,
+  BOSSES, BOSS_HP, BOSS_HEARTS, bossBeaten, markBossBeaten, weeklySummary, canSpeak, speak, dotGridHtml,
+} from './extras.js';
 
 const app = document.getElementById('app');
 let state = load();
 setSound(state.settings.sound);
+applyTheme(state);
 
 const ROUND_LENGTH = 10;
 const BLITZ_SECONDS = 60;
@@ -48,6 +54,7 @@ function startSync() {
       state = merged;
       save(state, false);
       setSound(state.settings.sound);
+      applyTheme(state);
       if (screen && screen !== renderSettings && !document.querySelector('.modal')) screen();
     },
   });
@@ -119,10 +126,15 @@ function renderHome() {
   const trouble = troubleFacts(state);
   const name = state.name ? esc(state.name) : 'Mathlete';
   const customTables = state.settings.customTables || [];
+  const goal = state.settings.goal || {};
+  const dailyDone = dailyDoneToday(state);
+  const dailyStreak = dateStreak(state.dailyDone);
+  const doneToday = roundsToday(state);
+  const bossesBeaten = (state.bosses || []).length;
 
   app.innerHTML = `
     <header class="hero">
-      <div class="avatar" aria-hidden="true">${rank.emoji}</div>
+      <div class="avatar" aria-hidden="true">${avatarEmoji(state, rank.emoji)}</div>
       <div class="hero-text">
         <h1>Hi, ${name}!</h1>
         <div class="rank">${rank.title}</div>
@@ -131,8 +143,26 @@ function renderHome() {
         </div>
         <div class="xptext">${state.xp} XP${rank.next ? ` · ${rank.next.xp - state.xp} to ${rank.next.emoji} ${rank.next.title}` : ' · Top rank!'}</div>
       </div>
-      ${state.days.streak > 1 ? `<div class="daystreak" title="Days in a row">📅 ${state.days.streak}</div>` : ''}
+      <div class="pills">
+        <button class="pill" data-go="shop" title="Gems: spend them in the shop">💎 ${gems(state)}</button>
+        ${state.days.streak > 1 ? `<span class="pill" title="Days in a row">📅 ${state.days.streak}</span>` : ''}
+      </div>
     </header>
+
+    <section class="card today">
+      <button class="daily ${dailyDone ? 'done' : ''}" data-mode="daily" ${dailyDone ? 'disabled' : ''}>
+        <span class="big">${dailyDone ? '✅' : '🎁'}</span>
+        <span class="dtext"><b>${dailyDone ? 'Daily challenge done!' : 'Daily challenge'}</b>
+          <small>${dailyDone ? 'Come back tomorrow for a new chest.' : `${DAILY_LENGTH} questions, win a treasure chest`}${dailyStreak > 1 ? ` · 🔥 ${dailyStreak} days` : ''}</small></span>
+      </button>
+      ${goal.rounds ? `
+        <div class="goal">
+          <div class="goalrow"><b>🎯 Today's goal</b><span>${Math.min(doneToday, goal.rounds)} / ${goal.rounds} rounds${doneToday >= goal.rounds ? ' ✅' : ''}</span></div>
+          <div class="meter"><span style="width:${Math.min(100, (doneToday / goal.rounds) * 100)}%"></span></div>
+        </div>` : ''}
+      ${(goal.tables || []).length ? `
+        <button class="btn focus" data-mode="focus">⭐ Practice my focus tables: ${goal.tables.map((t) => `×${t}`).join(' ')}</button>` : ''}
+    </section>
 
     <section class="card">
       <h2>1. Pick your level</h2>
@@ -171,10 +201,12 @@ function renderHome() {
         <button class="mode fix" data-mode="fix" ${trouble.length ? '' : 'disabled'}>
           <span class="big">🔧</span><b>Fix My Mistakes</b><small>${trouble.length ? `${trouble.length} to fix` : 'Nothing to fix!'}</small>
         </button>
+        <button class="mode boss" data-go="bosses"><span class="big">👾</span><b>Boss Battles</b><small>${bossesBeaten} of 12 beaten</small></button>
       </div>
     </section>
 
     <nav class="footer">
+      <button class="link" data-go="shop">🛍️ Shop</button>
       <button class="link" data-go="badges">🏅 Badges (${Object.keys(state.badges).length}/${BADGES.length})</button>
       <button class="link" data-go="progress">📈 Progress</button>
       <button class="link" data-go="map">🗺️ Fact Map</button>
@@ -208,6 +240,8 @@ function renderHome() {
   app.querySelector('[data-go="map"]').addEventListener('click', renderMap);
   app.querySelector('[data-go="progress"]').addEventListener('click', renderProgress);
   app.querySelector('[data-go="settings"]').addEventListener('click', renderSettings);
+  app.querySelectorAll('[data-go="shop"]').forEach((b) => b.addEventListener('click', renderShop));
+  app.querySelector('[data-go="bosses"]').addEventListener('click', renderBosses);
 
   if (!state.name && !state.askedName && !document.querySelector('.modal')) askName();
 }
@@ -246,19 +280,36 @@ function stopTimer() {
   timer = null;
 }
 
-function startRound(mode) {
+const BOSS_QTYPES = { choice: 1, type: 4, missing: 2, truefalse: 1 };
+
+function startRound(mode, opts = {}) {
   screen = null;
-  const level = currentLevel();
+  let level = currentLevel();
   let pool = levelPool(level);
   let total = ROUND_LENGTH;
+  let qtype = state.settings.qtype;
   if (mode === 'fix') {
     pool = troubleFacts(state);
     if (!pool.length) return renderHome();
     total = Math.min(ROUND_LENGTH, Math.max(4, pool.length * 2));
+  } else if (mode === 'daily') {
+    pool = dailyPool(state, pool);
+    total = DAILY_LENGTH;
+    qtype = 'mixed';
+  } else if (mode === 'focus') {
+    const tables = state.settings.goal?.tables || [];
+    if (!tables.length) return renderHome();
+    pool = factsFor(tables, 12);
+    level = { ...level, label: 'Focus tables' };
+  } else if (mode === 'boss') {
+    pool = factsFor([opts.table], 12);
+    total = Infinity;
+    qtype = 'mixed';
+    level = { ...level, label: `Boss ×${opts.table}`, qtypes: BOSS_QTYPES, points: 20 };
   }
   round = {
-    mode, level, pool, total,
-    qtype: state.settings.qtype,
+    mode, level, pool, total, qtype,
+    table: opts.table, hp: BOSS_HP, hearts: BOSS_HEARTS,
     index: 0, right: 0, streak: 0, bestStreak: 0, points: 0,
     missed: [], recent: [], answered: false,
     endsAt: mode === 'blitz' ? Date.now() + BLITZ_SECONDS * 1000 : 0,
@@ -297,12 +348,13 @@ function nextQuestion() {
   round.answered = false;
   round.shownAt = Date.now();
   renderQuestion();
+  if (state.settings.voice) speak(spokenText(round.q));
 }
 
 function promptHtml(q) {
   return q.prompt.map((t) => {
     if (t === '?') return `<span class="blank" id="blank">?</span>`;
-    if (t === '×' || t === '=') return `<span class="op">${t}</span>`;
+    if (t === '×' || t === '=' || t === '÷') return `<span class="op">${t}</span>`;
     return `<span class="num">${t}</span>`;
   }).join('');
 }
@@ -311,7 +363,11 @@ function renderQuestion() {
   const q = round.q;
   const isBlitz = round.mode === 'blitz';
   const progress = isBlitz ? '' : `${round.index + 1} / ${round.total}`;
-  const modeLabel = { practice: '⭐ Practice', blitz: '⏱️ Beat the Clock', fix: '🔧 Fix My Mistakes' }[round.mode];
+  const modeLabel = {
+    practice: '⭐ Practice', blitz: '⏱️ Beat the Clock', fix: '🔧 Fix My Mistakes',
+    daily: '🎁 Daily Challenge', focus: '🎯 Focus Tables', boss: `👾 ${BOSSES[round.table]?.name || 'Boss'}`,
+  }[round.mode];
+  const isBoss = round.mode === 'boss';
 
   let answerArea = '';
   if (q.type === 'choice') {
@@ -337,14 +393,21 @@ function renderQuestion() {
     <div class="playbar">
       <button class="link quit" aria-label="Quit">✕</button>
       <span class="modelabel">${modeLabel}</span>
-      ${isBlitz ? `<span id="clock" class="clock">⏱️ ${BLITZ_SECONDS}s</span>` : `<span class="progress">${progress}</span>`}
+      ${isBlitz ? `<span id="clock" class="clock">⏱️ ${BLITZ_SECONDS}s</span>` : isBoss ? `<span class="hearts">${'❤️'.repeat(round.hearts)}${'🖤'.repeat(BOSS_HEARTS - round.hearts)}</span>` : `<span class="progress">${progress}</span>`}
     </div>
+    ${isBoss ? `
+      <div class="bossbar">
+        <span class="bossface" id="bossface">${BOSSES[round.table].emoji}</span>
+        <div class="hp"><span style="width:${(round.hp / BOSS_HP) * 100}%"></span></div>
+        <small>${round.hp} / ${BOSS_HP}</small>
+      </div>` : ''}
     <div class="scorebar">
       <span class="score">⭐ ${round.points}</span>
       <span class="streak ${round.streak >= 3 ? 'hot' : ''}">${round.streak >= 2 ? `🔥 ${round.streak}` : ''}</span>
     </div>
-    ${isBlitz ? '' : `<div class="dots">${Array.from({ length: round.total }, (_, i) => `<i class="${i < round.index ? (round.results?.[i] ? 'ok' : 'bad') : i === round.index ? 'cur' : ''}"></i>`).join('')}</div>`}
+    ${isBlitz || isBoss ? '' : `<div class="dots">${Array.from({ length: round.total }, (_, i) => `<i class="${i < round.index ? (round.results?.[i] ? 'ok' : 'bad') : i === round.index ? 'cur' : ''}"></i>`).join('')}</div>`}
     <section class="question" id="qcard">
+      ${state.settings.voice && canSpeak() ? '<button class="link sayit" aria-label="Read it again">🔊</button>' : ''}
       <div class="eq">${promptHtml(q)}</div>
       ${answerArea}
       <div id="feedback" class="feedback" hidden></div>
@@ -357,6 +420,7 @@ function renderQuestion() {
     round = null;
     renderHome();
   });
+  app.querySelector('.sayit')?.addEventListener('click', () => speak(spokenText(q)));
   app.querySelectorAll('[data-choice]').forEach((b) => b.addEventListener('click', () => submit(b.dataset.choice, b)));
   app.querySelectorAll('[data-key]').forEach((b) => b.addEventListener('click', () => keypad(b.dataset.key)));
 }
@@ -381,10 +445,16 @@ function submit(value, button) {
   const q = round.q;
   const correct = String(value) === String(q.answer);
   const seconds = (Date.now() - round.shownAt) / 1000;
-  const fixed = record(state, round.key, correct);
+  const { fixed, slow, mastered } = record(state, round.key, correct, seconds, state.settings.speed ?? 6);
   if (fixed) state.fixed = (state.fixed || 0) + 1;
+  if (round.mode === 'boss') {
+    if (correct) round.hp = Math.max(0, round.hp - (seconds < 3 ? 2 : 1));
+    else round.hearts--;
+    updateBoss(correct, seconds < 3);
+  }
   round.results = round.results || [];
   round.results[round.index] = correct;
+  round.times = [...(round.times || []), Math.min(seconds, 60)];
 
   const card = document.getElementById('qcard');
   const fb = document.getElementById('feedback');
@@ -405,7 +475,10 @@ function submit(value, button) {
     card.classList.add('good');
     fb.hidden = false;
     fb.className = 'feedback good';
-    fb.innerHTML = `<b>${fixed ? 'You fixed it! 🔧' : pick(CHEERS)}</b> <span class="plus">+${pts}</span>`;
+    fb.innerHTML = `<b>${fixed ? 'You fixed it! 🔧' : pick(CHEERS)}</b> <span class="plus">+${pts}</span>
+      ${mastered ? '<div class="masteredmsg">🌟 Mastered!</div>' : ''}
+      ${slow ? '<div class="slowmsg">Right! Answer a little faster to master it ⚡</div>' : ''}
+      ${round.mode === 'boss' && seconds < 3 ? '<div class="crit">💥 Critical hit!</div>' : ''}`;
     if (round.streak > 0 && round.streak % 5 === 0) {
       sfx.streak();
       confetti(60);
@@ -432,22 +505,39 @@ function submit(value, button) {
     fb.innerHTML = `
       <b>${pick(OOPS)}</b>
       <div class="answer">${answerText(q)}</div>
+      ${q.type === 'divide' ? '' : dotGridHtml(Math.min(a, b), Math.max(a, b))}
       <div class="tip">💡 ${tipFor(a, b)}</div>
       <small>We'll practice this one again soon.</small>
       ${round.mode === 'blitz' ? '' : '<button class="btn go" id="gotit">Got it!</button>'}`;
     persist();
     const at = round.index;
-    if (round.mode === 'blitz') setTimeout(() => advance(at), 1600);
+    if (round.mode === 'blitz') setTimeout(() => advance(at), 2200);
     else document.getElementById('gotit').focus();
     document.getElementById('gotit')?.addEventListener('click', () => advance());
+  }
+}
+
+function updateBoss(hit, crit) {
+  const face = document.getElementById('bossface');
+  const bar = document.querySelector('.hp span');
+  const hearts = document.querySelector('.hearts');
+  if (bar) bar.style.width = `${(round.hp / BOSS_HP) * 100}%`;
+  if (bar) bar.parentElement.nextElementSibling.textContent = `${round.hp} / ${BOSS_HP}`;
+  if (hearts) hearts.textContent = '❤️'.repeat(Math.max(0, round.hearts)) + '🖤'.repeat(BOSS_HEARTS - Math.max(0, round.hearts));
+  if (face) {
+    face.classList.remove('hit', 'crit', 'laugh');
+    void face.offsetWidth;
+    face.classList.add(hit ? (crit ? 'crit' : 'hit') : 'laugh');
   }
 }
 
 function advance(at) {
   if (!round || !round.answered) return;
   if (at !== undefined && at !== round.index) return;
-  round.index++;
+  // finishRound counts the just-answered question itself, so end before moving on.
   if (round.mode === 'blitz' && Date.now() >= round.endsAt) return finishRound();
+  if (round.mode === 'boss' && (round.hp <= 0 || round.hearts <= 0)) return finishRound();
+  round.index++;
   nextQuestion();
 }
 
@@ -468,7 +558,7 @@ document.addEventListener('keydown', (e) => {
   } else if (q.type === 'truefalse') {
     if (/^[y1]$/i.test(e.key)) submit('yes', app.querySelector('.yes'));
     if (/^[n2]$/i.test(e.key)) submit('no', app.querySelector('.no'));
-  } else if (q.type === 'type' || q.type === 'missing') {
+  } else if (q.type === 'type' || q.type === 'missing' || q.type === 'divide') {
     if (/^[0-9]$/.test(e.key)) keypad(e.key);
     else if (e.key === 'Backspace') keypad('back');
     else if (e.key === 'Enter') keypad('enter');
@@ -478,6 +568,7 @@ document.addEventListener('keydown', (e) => {
 // ---------- results ----------
 
 function starsFor(r) {
+  if (r.mode === 'boss') return r.hp <= 0 ? Math.max(1, r.hearts) : 0;
   if (r.mode === 'blitz') return r.right >= 30 ? 3 : r.right >= 20 ? 2 : r.right >= 10 ? 1 : 0;
   const pct = r.total ? r.right / r.total : 0;
   return pct >= 0.9 ? 3 : pct >= 0.7 ? 2 : pct >= 0.4 ? 1 : 0;
@@ -488,10 +579,18 @@ function finishRound() {
   const r = round;
   if (!r || r.finished) return;
   r.finished = true;
-  if (r.mode === 'blitz') {
+  if (r.mode === 'blitz' || r.mode === 'boss') {
     r.total = r.index + (r.answered ? 1 : 0);
     if (r.answered) r.index = r.total;
-    state.best.blitz = Math.max(state.best.blitz, r.right);
+  }
+  if (r.mode === 'blitz') state.best.blitz = Math.max(state.best.blitz, r.right);
+  const bossWon = r.mode === 'boss' && r.hp <= 0;
+  const bossFirstWin = bossWon && !bossBeaten(state, r.table);
+  if (bossWon) markBossBeaten(state, r.table);
+  let chest = null;
+  if (r.mode === 'daily') {
+    markDailyDone(state);
+    chest = openChest(state);
   }
   const before = rankFor(state.xp);
   const stars = starsFor(r);
@@ -508,7 +607,11 @@ function finishRound() {
     stars,
     points: r.points + bonus,
     missed: r.missed,
+    secs: r.times?.length ? Math.round((r.times.reduce((x, y) => x + y, 0) / r.times.length) * 10) / 10 : 0,
   }].slice(-100);
+  const gemsWon = Math.max(1, Math.round((r.points + bonus) / 10)) + (bossFirstWin ? 60 : 0);
+  addGems(state, gemsWon);
+  const goalGems = checkGoal(state);
   const after = rankFor(state.xp);
   const newBadges = checkBadges(state, { mode: r.mode, right: r.right, total: r.total });
   persist();
@@ -520,7 +623,8 @@ function finishRound() {
     confetti(stars === 3 || rankUp ? 200 : 100);
   }
 
-  const heading = stars === 3 ? 'Amazing!' : stars === 2 ? 'Great work!' : stars === 1 ? 'Good effort!' : 'Keep practicing!';
+  let heading = stars === 3 ? 'Amazing!' : stars === 2 ? 'Great work!' : stars === 1 ? 'Good effort!' : 'Keep practicing!';
+  if (r.mode === 'boss') heading = bossWon ? `You beat ${BOSSES[r.table].name}!` : `${BOSSES[r.table].name} wins this time!`;
   app.innerHTML = `
     <section class="card results">
       <h1>${heading}</h1>
@@ -530,6 +634,11 @@ function finishRound() {
         <div><b>${r.bestStreak}</b><small>best streak</small></div>
         <div><b>+${r.points + bonus}</b><small>XP${bonus ? ` (incl. ${bonus} star bonus)` : ''}</small></div>
       </div>
+      <p class="gemswon">💎 +${gemsWon} gems${bossFirstWin ? ' (incl. 60 for a new boss!)' : ''}</p>
+      ${r.mode === 'boss' ? `<div class="bossresult"><span class="big ${bossWon ? 'defeated' : ''}">${BOSSES[r.table].emoji}</span>${bossWon ? 'Defeated! 🏆' : 'Practice the ×' + r.table + ' table and try again.'}</div>` : ''}
+      ${chest ? `<button class="chest" id="chest"><span class="big">🧰</span><b>Tap to open your chest!</b></button>
+        <div class="chestprize" id="chestprize" hidden><span class="big">💎</span><b>+${chest.gemsWon} gems and +${chest.xpWon} XP!</b>${chest.streak > 1 ? `<small>🔥 ${chest.streak}-day challenge streak</small>` : ''}</div>` : ''}
+      ${goalGems ? `<div class="goalmet">🎯 Today's goal reached! 💎 +${goalGems} gems</div>` : ''}
       ${r.mode === 'blitz' && r.right >= state.best.blitz && r.right > 0 ? '<p class="newbest">🏁 New personal best!</p>' : ''}
       ${rankUp ? `<div class="rankup"><span class="big">${after.emoji}</span><b>Rank up!</b> You're now a <b>${after.title}</b>!</div>` : ''}
       ${newBadges.length ? `
@@ -541,15 +650,21 @@ function finishRound() {
           <div class="chips">${r.missed.map((k) => { const [a, b] = parseKey(k); return `<span class="chip">${a} × ${b} = ${a * b}</span>`; }).join('')}</div>
         </div>` : ''}
       <div class="actions">
-        <button class="btn go" id="again">Play again</button>
+        ${r.mode === 'daily' ? '' : `<button class="btn go" id="again">${r.mode === 'boss' ? (bossWon ? 'Fight again' : 'Try again') : 'Play again'}</button>`}
         ${troubleFacts(state).length ? '<button class="btn fix" id="fix">🔧 Fix mistakes</button>' : ''}
         <button class="btn" id="home">Home</button>
       </div>
     </section>`;
-  document.getElementById('again').addEventListener('click', () => startRound(r.mode === 'fix' && !troubleFacts(state).length ? 'practice' : r.mode));
+  document.getElementById('again')?.addEventListener('click', () => startRound(r.mode === 'fix' && !troubleFacts(state).length ? 'practice' : r.mode, { table: r.table }));
   document.getElementById('fix')?.addEventListener('click', () => startRound('fix'));
   document.getElementById('home').addEventListener('click', renderHome);
-  document.getElementById('again').focus();
+  document.getElementById('chest')?.addEventListener('click', (e) => {
+    e.currentTarget.remove();
+    document.getElementById('chestprize').hidden = false;
+    sfx.fanfare();
+    confetti(150);
+  });
+  (document.getElementById('chest') || document.getElementById('again') || document.getElementById('home')).focus();
 }
 
 // ---------- badges ----------
@@ -567,6 +682,76 @@ function renderBadges() {
   app.querySelector('.back').addEventListener('click', renderHome);
 }
 
+// ---------- shop ----------
+
+function shopItemHtml(item, kind, equipped) {
+  const own = owns(state, item.id);
+  const icon = item.id === 'rank' ? rankFor(state.xp).emoji : item.emoji;
+  const label = equipped ? 'Using ✓' : own ? 'Use' : `💎 ${item.cost}`;
+  const afford = own || gems(state) >= item.cost;
+  return `<button class="shopitem ${equipped ? 'on' : ''} ${afford ? '' : 'poor'}" data-kind="${kind}" data-id="${item.id}">
+    <span class="big">${icon}</span><b>${item.name}</b><small>${label}</small></button>`;
+}
+
+function renderShop() {
+  screen = renderShop;
+  const av = state.settings.avatar || 'rank';
+  const th = state.settings.theme || 'default';
+  app.innerHTML = `
+    <div class="playbar"><button class="link back">← Back</button><span class="modelabel">🛍️ Shop</span><span class="gembal">💎 ${gems(state)}</span></div>
+    <section class="card">
+      <p class="hint">Earn gems by playing rounds, opening daily chests, beating bosses and reaching your goal.</p>
+      <h2>Avatars</h2>
+      <div class="shopgrid">${AVATARS.map((a) => shopItemHtml(a, 'avatar', a.id === av)).join('')}</div>
+    </section>
+    <section class="card">
+      <h2>Themes</h2>
+      <div class="shopgrid">${THEMES.map((t) => shopItemHtml(t, 'theme', t.id === th)).join('')}</div>
+    </section>
+    <div id="shopmsg" class="shopmsg" aria-live="polite"></div>`;
+  app.querySelector('.back').addEventListener('click', renderHome);
+  app.querySelectorAll('.shopitem').forEach((b) => b.addEventListener('click', () => {
+    const list = b.dataset.kind === 'avatar' ? AVATARS : THEMES;
+    const item = list.find((x) => x.id === b.dataset.id);
+    const wasOwned = owns(state, item.id);
+    if (!wasOwned && !confirm(`Buy ${item.name} for 💎 ${item.cost}?`)) return;
+    if (!buy(state, item)) {
+      document.getElementById('shopmsg').textContent = `You need 💎 ${item.cost - gems(state)} more gems for that one. Keep playing!`;
+      return;
+    }
+    state.settings[b.dataset.kind] = item.id;
+    applyTheme(state);
+    checkBadges(state);
+    persist();
+    if (!wasOwned) {
+      sfx.fanfare();
+      confetti(80);
+    }
+    renderShop();
+  }));
+}
+
+// ---------- boss battles ----------
+
+function renderBosses() {
+  screen = renderBosses;
+  app.innerHTML = `
+    <div class="playbar"><button class="link back">← Back</button><span class="modelabel">👾 Boss Battles</span><span></span></div>
+    <section class="card">
+      <p class="hint">Each boss guards one times table. Every right answer is a hit (fast answers hit twice!). You have ${BOSS_HEARTS} hearts. Beat a boss for the first time to win 💎 60.</p>
+      <div class="bossgrid">
+        ${ALL_TABLES.map((t) => `
+          <button class="bosscard ${bossBeaten(state, t) ? 'beaten' : ''}" data-boss="${t}">
+            <span class="big">${BOSSES[t].emoji}</span>
+            <b>×${t}</b><small>${BOSSES[t].name}</small>
+            ${bossBeaten(state, t) ? '<span class="trophy">🏆</span>' : ''}
+          </button>`).join('')}
+      </div>
+    </section>`;
+  app.querySelector('.back').addEventListener('click', renderHome);
+  app.querySelectorAll('[data-boss]').forEach((b) => b.addEventListener('click', () => startRound('boss', { table: Number(b.dataset.boss) })));
+}
+
 // ---------- fact map ----------
 
 function boxClass(s) {
@@ -576,38 +761,63 @@ function boxClass(s) {
   return s.box >= 3 ? 'almost' : 'learning';
 }
 
+function speedClass(s, limit) {
+  if (!s.avg) return 'new';
+  const l = limit || 6;
+  if (s.avg <= l * 0.5) return 'master';
+  if (s.avg <= l) return 'almost';
+  if (s.avg <= l * 1.5) return 'learning';
+  return 'miss';
+}
+
+let mapView = 'mastery';
+
 function renderMap() {
   screen = renderMap;
+  const limit = state.settings.speed ?? 6;
   let grid = '<div class="cell head">×</div>' + ALL_TABLES.map((n) => `<div class="cell head">${n}</div>`).join('');
   for (const a of ALL_TABLES) {
     grid += `<div class="cell head">${a}</div>`;
     for (const b of ALL_TABLES) {
       const s = stat(state, a <= b ? `${a}x${b}` : `${b}x${a}`);
-      grid += `<button class="cell ${boxClass(s)}" data-a="${a}" data-b="${b}" aria-label="${a} times ${b}">${a * b}</button>`;
+      grid += `<button class="cell ${mapView === 'speed' ? speedClass(s, limit) : boxClass(s)}" data-a="${a}" data-b="${b}" aria-label="${a} times ${b}">${a * b}</button>`;
     }
   }
   app.innerHTML = `
     <div class="playbar"><button class="link back">← Back</button><span class="modelabel">🗺️ Fact Map</span><span></span></div>
     <section class="card">
+      <div class="chips mapviews">
+        <button class="chip ${mapView === 'mastery' ? 'on' : ''}" data-view="mastery">🌟 Mastery</button>
+        <button class="chip ${mapView === 'speed' ? 'on' : ''}" data-view="speed">⚡ Speed</button>
+      </div>
       <p class="hint">Every fact up to 12 × 12. 3 × 7 and 7 × 3 count as the same fact. Tap one to see how it's going.</p>
       <div class="grid">${grid}</div>
-      <div class="legend">
+      <div class="legend">${mapView === 'speed' ? `
+        <span><i class="new"></i>No time yet</span>
+        <span><i class="miss"></i>Over ${Math.round((limit || 6) * 1.5)}s</span>
+        <span><i class="learning"></i>${limit || 6}–${Math.round((limit || 6) * 1.5)}s</span>
+        <span><i class="almost"></i>Under ${limit || 6}s</span>
+        <span><i class="master"></i>Under ${(limit || 6) / 2}s</span>` : `
         <span><i class="new"></i>Not tried</span>
         <span><i class="miss"></i>Just missed</span>
         <span><i class="learning"></i>Learning</span>
         <span><i class="almost"></i>Almost</span>
-        <span><i class="master"></i>Mastered</span>
+        <span><i class="master"></i>Mastered</span>`}
       </div>
       <div id="cellinfo" class="cellinfo">&nbsp;</div>
     </section>`;
   app.querySelector('.back').addEventListener('click', renderHome);
+  app.querySelectorAll('[data-view]').forEach((b) => b.addEventListener('click', () => {
+    mapView = b.dataset.view;
+    renderMap();
+  }));
   const info = document.getElementById('cellinfo');
   app.querySelectorAll('.cell[data-a]').forEach((c) => c.addEventListener('click', () => {
     const a = Number(c.dataset.a), b = Number(c.dataset.b);
     const s = stat(state, a <= b ? `${a}x${b}` : `${b}x${a}`);
     info.textContent = s.box < 0
       ? `${a} × ${b} = ${a * b} · not tried yet`
-      : `${a} × ${b} = ${a * b} · right ${s.right} · missed ${s.wrong}${s.box >= MASTERED_BOX ? ' · mastered ✅' : ''}`;
+      : `${a} × ${b} = ${a * b} · right ${s.right} · missed ${s.wrong}${s.avg ? ` · avg ${s.avg}s` : ''}${s.box >= MASTERED_BOX ? ' · mastered ✅' : ''}`;
   }));
 }
 
@@ -652,6 +862,28 @@ function renderSettings() {
     <section class="card settings">
       <label>Player name <input id="name" maxlength="20" value="${esc(state.name)}"></label>
       <label class="row"><input type="checkbox" id="sound" ${state.settings.sound ? 'checked' : ''}> Sounds</label>
+      ${canSpeak() ? `<label class="row"><input type="checkbox" id="voice" ${state.settings.voice ? 'checked' : ''}> Read questions out loud 🔊</label>` : ''}
+    </section>
+    <section class="card settings">
+      <h2>👪 For grown-ups</h2>
+      <label>Daily goal
+        <select id="goalrounds">
+          ${[0, 1, 2, 3, 4, 5].map((n) => `<option value="${n}" ${(state.settings.goal?.rounds || 0) === n ? 'selected' : ''}>${n ? `${n} round${n > 1 ? 's' : ''} a day` : 'No goal'}</option>`).join('')}
+        </select>
+      </label>
+      <p class="hint">Reaching the goal gives 💎 30 once a day.</p>
+      <p><b>Focus tables</b></p>
+      <div class="tablepick" id="focus">
+        ${ALL_TABLES.map((t) => `<button class="chip ${(state.settings.goal?.tables || []).includes(t) ? 'on' : ''}" data-focus="${t}">×${t}</button>`).join('')}
+      </div>
+      <p class="hint">Focus tables get their own practice button, and the daily challenge uses them.</p>
+      <label>Speed needed to master a fact
+        <select id="speed">
+          ${[[0, 'No time limit'], [10, '10 seconds (relaxed)'], [6, '6 seconds (default)'], [4, '4 seconds (quick)'], [3, '3 seconds (lightning)']]
+            .map(([v, l]) => `<option value="${v}" ${(state.settings.speed ?? 6) === v ? 'selected' : ''}>${l}</option>`).join('')}
+        </select>
+      </label>
+      <p class="hint">Slower right answers still count, but a fact only becomes "mastered" when answered this fast.</p>
     </section>
     <section class="card settings">${syncCardHtml()}</section>
     <section class="card settings">
@@ -665,6 +897,28 @@ function renderSettings() {
   document.getElementById('sound').addEventListener('change', (e) => {
     state.settings.sound = e.target.checked;
     setSound(e.target.checked);
+    persist();
+  });
+  document.getElementById('voice')?.addEventListener('change', (e) => {
+    state.settings.voice = e.target.checked;
+    if (e.target.checked) speak('I will read the questions out loud.');
+    persist();
+  });
+  const goalOf = () => ({ rounds: 0, tables: [], ...(state.settings.goal || {}) });
+  document.getElementById('goalrounds').addEventListener('change', (e) => {
+    state.settings.goal = { ...goalOf(), rounds: Number(e.target.value) };
+    persist();
+  });
+  app.querySelectorAll('[data-focus]').forEach((b) => b.addEventListener('click', () => {
+    const t = Number(b.dataset.focus);
+    const set = new Set(goalOf().tables);
+    if (set.has(t)) set.delete(t); else set.add(t);
+    state.settings.goal = { ...goalOf(), tables: [...set].sort((x, y) => x - y) };
+    b.classList.toggle('on', set.has(t));
+    persist();
+  }));
+  document.getElementById('speed').addEventListener('change', (e) => {
+    state.settings.speed = Number(e.target.value);
     persist();
   });
   document.getElementById('syncon')?.addEventListener('click', () => {
@@ -712,7 +966,52 @@ function renderSettings() {
 
 // ---------- progress (for grown-ups) ----------
 
-const MODE_ICON = { practice: '⭐', blitz: '⏱️', fix: '🔧' };
+const MODE_ICON = { practice: '⭐', blitz: '⏱️', fix: '🔧', daily: '🎁', focus: '🎯', boss: '👾' };
+
+function factChips(keys, cls = '') {
+  return keys.map((k) => { const [a, b] = parseKey(k); return `<span class="chip ${cls}">${a} × ${b} = ${a * b}</span>`; }).join('');
+}
+
+function slowestFacts(n = 8) {
+  return Object.entries(state.facts)
+    .filter(([, s]) => s.avg)
+    .sort((x, y) => y[1].avg - x[1].avg)
+    .slice(0, n);
+}
+
+function speedHtml() {
+  const weekAgo = Date.now() - 7 * 864e5;
+  const timed = (state.history || []).filter((h) => h.secs);
+  const avgOf = (list) => (list.length ? Math.round((list.reduce((n, h) => n + h.secs * h.total, 0) / list.reduce((n, h) => n + h.total, 0)) * 10) / 10 : 0);
+  const thisWeek = avgOf(timed.filter((h) => h.t >= weekAgo));
+  const lastWeek = avgOf(timed.filter((h) => h.t < weekAgo && h.t >= weekAgo - 7 * 864e5));
+  const slow = slowestFacts();
+  const recent = timed.slice(-12);
+  const most = Math.max(1, ...recent.map((h) => h.secs));
+  if (!timed.length && !slow.length) return '<p class="hint">Speed shows up here after a few rounds.</p>';
+  const trend = thisWeek && lastWeek
+    ? (thisWeek < lastWeek ? ` <span class="faster">▼ ${Math.round((lastWeek - thisWeek) * 10) / 10}s faster than last week</span>` : thisWeek > lastWeek ? ` <span class="slower">▲ ${Math.round((thisWeek - lastWeek) * 10) / 10}s slower than last week</span>` : '')
+    : '';
+  return `
+    <p class="weekline">Average answer time this week: <b>${thisWeek ? `${thisWeek}s` : '–'}</b>${trend}</p>
+    ${recent.length > 1 ? `
+      <p class="hint">Average seconds per answer, last ${recent.length} rounds (shorter is faster)</p>
+      <div class="bars speedbars">${recent.map((h) => `<div class="bar"><span style="height:${(h.secs / most) * 100}%"></span><b>${h.secs}</b><small>${MODE_ICON[h.mode] || ''}</small></div>`).join('')}</div>` : ''}
+    ${slow.length ? `<p><b>🐢 Slowest facts</b> (average time)</p>
+      <div class="chips">${slow.map(([k, s]) => { const [a, b] = parseKey(k); return `<span class="chip trouble">${a} × ${b} <small>${s.avg}s</small></span>`; }).join('')}</div>` : ''}`;
+}
+
+function weeklyHtml() {
+  const w = weeklySummary(state);
+  if (!w.rounds) return '<p class="hint">No rounds in the last 7 days yet.</p>';
+  const pct = w.total ? Math.round((w.right / w.total) * 100) : 0;
+  return `
+    <p class="weekline">Played <b>${w.rounds} round${w.rounds > 1 ? 's' : ''}</b> on <b>${w.days} day${w.days > 1 ? 's' : ''}</b>, getting <b>${pct}%</b> right (${w.right} of ${w.total}).</p>
+    <p><b>🌟 Newly mastered:</b> ${w.newlyMastered.length ? w.newlyMastered.length : 'none yet'}</p>
+    ${w.newlyMastered.length ? `<div class="chips">${factChips(w.newlyMastered.slice(0, 12), 'good')}</div>` : ''}
+    <p><b>😬 Still stuck on:</b> ${w.stuck.length ? '' : 'nothing, nice!'}</p>
+    ${w.stuck.length ? `<div class="chips">${factChips(w.stuck, 'trouble')}</div>` : ''}`;
+}
 
 function renderProgress() {
   screen = renderProgress;
@@ -749,7 +1048,19 @@ function renderProgress() {
         <div><b>${wTotal ? Math.round((wRight / wTotal) * 100) + '%' : '–'}</b><small>right this week</small></div>
         <div><b>${mastered}/${all.length}</b><small>facts mastered</small></div>
         <div><b>${state.days.streak || 0}</b><small>days in a row</small></div>
+        <div><b>${dateStreak(state.dailyDone)}</b><small>daily challenge streak</small></div>
+        <div><b>${(state.bosses || []).length}/12</b><small>bosses beaten</small></div>
+        <div><b>${(state.settings.goal?.rounds) ? `${Math.min(roundsToday(state), state.settings.goal.rounds)}/${state.settings.goal.rounds}` : '–'}</b><small>today's goal</small></div>
+        <div><b>💎 ${gems(state)}</b><small>gems to spend</small></div>
       </div>
+    </section>
+    <section class="card">
+      <h2>📋 This week</h2>
+      ${weeklyHtml()}
+    </section>
+    <section class="card">
+      <h2>⚡ Speed</h2>
+      ${speedHtml()}
     </section>
     <section class="card">
       <h2>Rounds this week</h2>
@@ -771,7 +1082,7 @@ function renderProgress() {
       ${history.length ? `<ul class="rounds">${history.slice(-20).reverse().map((h) => `
         <li>
           <span class="ricon">${MODE_ICON[h.mode] || '⭐'}</span>
-          <span class="rmain"><b>${h.right}${h.mode === 'blitz' ? ' right' : ` / ${h.total}`}</b> · ${esc(h.level)}<small>${when(h.t)}</small></span>
+          <span class="rmain"><b>${h.right}${h.mode === 'blitz' ? ' right' : ` / ${h.total}`}</b> · ${esc(h.level)}<small>${when(h.t)}${h.secs ? ` · ${h.secs}s per answer` : ''}</small></span>
           <span class="rstars">${'★'.repeat(h.stars)}${'☆'.repeat(3 - h.stars)}</span>
         </li>`).join('')}</ul>` : '<p class="hint">No rounds yet.</p>'}
     </section>`;

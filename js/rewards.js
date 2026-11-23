@@ -44,6 +44,11 @@ export const BADGES = [
   { id: 'blitz30', emoji: '🌩️', name: 'Thunderbolt', desc: '30 right in Beat the Clock', test: (s) => s.best.blitz >= 30 },
   { id: 'days3', emoji: '📅', name: 'Habit Hero', desc: 'Play 3 days in a row', test: (s) => s.days.streak >= 3 },
   { id: 'days7', emoji: '🗓️', name: 'Week Warrior', desc: 'Play 7 days in a row', test: (s) => s.days.streak >= 7 },
+  { id: 'daily1', emoji: '🎁', name: 'Challenger', desc: 'Finish a daily challenge', test: (s) => (s.dailyDone || []).length >= 1 },
+  { id: 'daily7', emoji: '🗝️', name: 'Treasure Hunter', desc: 'Finish 7 daily challenges', test: (s) => (s.dailyDone || []).length >= 7 },
+  { id: 'boss1', emoji: '⚔️', name: 'Boss Slayer', desc: 'Beat your first boss', test: (s) => (s.bosses || []).length >= 1 },
+  { id: 'boss12', emoji: '🛡️', name: 'Hero of the Realm', desc: 'Beat all 12 bosses', test: (s) => (s.bosses || []).length >= 12 },
+  { id: 'shopper', emoji: '🛍️', name: 'Shopper', desc: 'Buy something in the shop', test: (s) => (s.owned || []).length >= 1 },
   { id: 'rounds25', emoji: '🎮', name: 'Gamer', desc: 'Finish 25 rounds', test: (s) => s.rounds >= 25 },
   ...Array.from({ length: 12 }, (_, i) => {
     const t = i + 1;
@@ -65,7 +70,7 @@ export const BADGES = [
 ];
 
 /** Award any newly-earned badges. Returns the list of new ones. */
-export function checkBadges(state, round) {
+export function checkBadges(state, round = null) {
   const earned = [];
   for (const b of BADGES) {
     if (state.badges[b.id]) continue;

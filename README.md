@@ -13,7 +13,14 @@ A small, kid-friendly times table practice game. Plain HTML, CSS and JavaScript 
 - **Rewards:** points with streak and speed bonuses, stars per round, XP ranks (Number Cub up to Legend of Times), badges, confetti and sounds, and a days-in-a-row counter.
 - **Fact Map:** a 12 × 12 grid for grown-ups showing which facts are new, missed, learning or mastered.
 
-- **Progress screen:** rounds per day, accuracy this week, facts that need practice, and recent rounds.
+- **Daily challenge:** 10 questions a day (from the parent's focus tables or weak spots) that opens a treasure chest of gems and XP.
+- **Boss battles:** a boss for each table with a health bar. Right answers hit (fast ones hit twice) and misses cost hearts.
+- **Shop:** gems from rounds, chests, bosses and goals buy avatars and themes (Ocean, Jungle, Candy, Space).
+- **Division mode**, **read-aloud questions** (browser speech), and a **dot-grid picture** after each miss.
+- **Speed goal:** a fact is only "mastered" once it's answered within the speed limit (default 6 seconds, set in Settings).
+- **For grown-ups (Settings):** a daily rounds goal with a gem bonus, focus tables, and the speed limit.
+- **Answer times:** each fact keeps a running average answer time and each round logs seconds per answer.
+- **Progress screen:** weekly summary (newly mastered, still stuck), speed trend and slowest facts, rounds per day, accuracy this week, facts that need practice, and recent rounds.
 - **Cloud sync (optional):** link devices with a family code so a parent can see progress from their own phone.
 
 Progress is always saved in the browser (`localStorage`). With cloud sync on, it is also merged into Firebase Firestore so every linked device sees the same progress, and play still works offline.
@@ -51,4 +58,5 @@ python3 -m http.server 8000
 | `js/sync.js` | Family codes, merging two saves, Firestore sync |
 | `js/firebase-config.js` | Firebase web config (null = sync off) |
 | `js/fx.js` | Sound effects and confetti |
+| `js/extras.js` | Daily challenge, gems and shop, bosses, goals, weekly summary, read-aloud, dot grid |
 | `js/app.js` | Screens and game flow |
