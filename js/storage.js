@@ -8,7 +8,7 @@ function fresh() {
   return {
     version: VERSION,
     name: '',
-    settings: { difficulty: 'easy', qtype: 'mixed', sound: true },
+    settings: { difficulty: 'easy', qtype: 'mixed', sound: true, voice: false, speed: 6, avatar: 'rank', theme: 'default', goal: { rounds: 0, tables: [] } },
     // facts["3x7"] = { right, wrong, box, last }  (box 0..5, Leitner-style)
     facts: {},
     xp: 0,
@@ -17,6 +17,12 @@ function fresh() {
     rounds: 0,
     days: { last: '', streak: 0 },
     history: [],         // recent rounds, newest last (capped)
+    gemsEarned: 0,       // gems balance = earned - spent (both only go up, so sync can merge)
+    gemsSpent: 0,
+    owned: [],           // shop item ids
+    bosses: [],          // tables whose boss is beaten
+    dailyDone: [],       // YYYY-MM-DD dates the daily challenge was finished
+    goalPaid: [],        // dates the daily-goal bonus was paid
     familyCode: '',      // cloud sync code, '' = this device only
     updated: 0,          // ms timestamp of last change
   };

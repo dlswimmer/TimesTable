@@ -54,6 +54,13 @@ export function merge(a, b) {
   out.xp = max(a.xp, b.xp);
   out.rounds = max(a.rounds, b.rounds);
   out.fixed = max(a.fixed, b.fixed);
+  out.gemsEarned = max(a.gemsEarned, b.gemsEarned);
+  out.gemsSpent = max(a.gemsSpent, b.gemsSpent);
+  const union = (x, y) => [...new Set([...(x || []), ...(y || [])])].sort();
+  out.owned = union(a.owned, b.owned);
+  out.bosses = union(a.bosses, b.bosses).map(Number).sort((x, y) => x - y);
+  out.dailyDone = union(a.dailyDone, b.dailyDone).slice(-90);
+  out.goalPaid = union(a.goalPaid, b.goalPaid).slice(-90);
   out.best = {
     streak: max(a.best?.streak, b.best?.streak),
     blitz: max(a.best?.blitz, b.best?.blitz),

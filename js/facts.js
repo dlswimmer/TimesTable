@@ -34,7 +34,7 @@ export const LEVELS = {
     tables: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
     maxFactor: 12,
     points: 20,
-    qtypes: { choice: 1, truefalse: 1, type: 4, missing: 3 },
+    qtypes: { choice: 1, truefalse: 1, type: 4, missing: 3, divide: 2 },
   },
 };
 
@@ -89,22 +89,44 @@ export function troubleFacts(state) {
 }
 
 /**
- * Record an answer. Returns true if this was a previously-missed fact
- * that he just got right (used for the "fixer" badge).
+ * Record an answer.
+ * With a speed limit (seconds), a correct but slow answer still counts,
+ * but the fact can't reach "mastered" until it is answered quickly.
+ * Returns { fixed, slow, mastered }:
+ *   fixed: a previously-missed fact he just got right (for the "fixer" badge)
+ *   slow: right, but too slow to move toward mastery
+ *   mastered: this answer made the fact mastered for the first time
  */
-export function record(state, key, correct) {
+export function record(state, key, correct, seconds = 0, speedLimit = 0) {
   const s = { ...stat(state, key) };
   const wasTrouble = s.wrong > 0 && s.box <= 1;
+  let slow = false;
+  let mastered = false;
   if (correct) {
     s.right++;
-    s.box = Math.min(MAX_BOX, Math.max(0, s.box) + 1);
+    let box = Math.min(MAX_BOX, Math.max(0, s.box) + 1);
+    if (speedLimit && seconds > speedLimit && box >= MASTERED_BOX) {
+      box = Math.max(s.box, MASTERED_BOX - 1);
+      slow = s.box < MASTERED_BOX;
+    }
+    if (box >= MASTERED_BOX && !s.masteredAt) {
+      s.masteredAt = Date.now();
+      mastered = true;
+    }
+    s.box = box;
+    if (seconds > 0) {
+      const secs = Math.min(seconds, 60);
+      s.secs = Math.round(secs * 10) / 10;
+      // running average of correct-answer time, weighted toward recent answers
+      s.avg = Math.round((s.avg ? s.avg * 0.7 + secs * 0.3 : secs) * 10) / 10;
+    }
   } else {
     s.wrong++;
     s.box = 0;
   }
   s.last = Date.now();
   state.facts[key] = s;
-  return correct && wasTrouble;
+  return { fixed: correct && wasTrouble, slow, mastered };
 }
 
 export function isTableMastered(state, table, maxFactor = 12) {

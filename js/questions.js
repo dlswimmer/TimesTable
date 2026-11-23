@@ -53,6 +53,11 @@ const BUILDERS = {
     return { type: 'missing', prompt: [a, '×', '?', '=', a * b], answer: b };
   },
 
+  divide(a, b) {
+    // product ÷ a = b
+    return { type: 'divide', prompt: [a * b, '÷', a, '=', '?'], answer: b };
+  },
+
   truefalse(a, b) {
     const isTrue = Math.random() < 0.5;
     const shown = isTrue ? a * b : distractors(a, b, 1)[0];
@@ -72,6 +77,7 @@ export const QTYPE_LABELS = {
   type: { label: 'Type it', emoji: '⌨️' },
   missing: { label: 'Missing number', emoji: '🔍' },
   truefalse: { label: 'True or false', emoji: '👍' },
+  divide: { label: 'Division', emoji: '➗' },
 };
 
 function weightedType(weights) {
@@ -99,5 +105,15 @@ export function makeQuestion(x, y, qtype, levelWeights) {
 export function answerText(q) {
   if (q.type === 'truefalse') return `${q.prompt[0]} × ${q.prompt[2]} = ${q.realAnswer}`;
   if (q.type === 'missing') return `${q.prompt[0]} × ${q.answer} = ${q.prompt[4]}`;
+  if (q.type === 'divide') return `${q.prompt[0]} ÷ ${q.prompt[2]} = ${q.answer}`;
   return `${q.prompt[0]} × ${q.prompt[2]} = ${q.answer}`;
+}
+
+/** The question as a sentence, for reading aloud. */
+export function spokenText(q) {
+  const [p0, , p2, , p4] = q.prompt;
+  if (q.type === 'missing') return `${p0} times what equals ${p4}?`;
+  if (q.type === 'divide') return `${p0} divided by ${p2}?`;
+  if (q.type === 'truefalse') return `Is ${p0} times ${p2} equal to ${p4}?`;
+  return `${p0} times ${p2}?`;
 }
